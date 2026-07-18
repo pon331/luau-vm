@@ -1025,7 +1025,7 @@ end
 
 		const SizeK, Length = ReadVarInt(Bytecode, Offset)
 		Offset += Length
-		const KTable = table.create(SizeK, nil)
+		const Constants = table.create(SizeK, nil)
 
 		for j = 1, SizeK do
 			const KType = buffer.readu8(Bytecode, Offset)
@@ -1035,15 +1035,15 @@ end
 			elseif KType == 1 then -- LBC_CONSTANT_BOOLEAN
 				const Byte = buffer.readu8(Bytecode, Offset)
 				Offset += 1
-				KTable[j] = Byte ~= 0
+				Constants[j] = Byte ~= 0
 			elseif KType == 2 then -- LBC_CONSTANT_NUMBER
 				const Double = buffer.readf64(Bytecode, Offset)
 				Offset += 8
-				KTable[j] = Double
+				Constants[j] = Double
 			elseif KType == 3 then -- LBC_CONSTANT_STRING
 				const Index, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
-				KTable[j] = StringTable[Index]
+				Constants[j] = StringTable[Index]
 			elseif KType == 4 then -- LBC_CONSTANT_IMPORT
 				const IId = buffer.readu32(Bytecode, Offset)
 				Offset += 4
@@ -1055,15 +1055,15 @@ end
 
 				local Result: any?
 
-				const Key = KTable[Id0] :: string
+				const Key = Constants[Id0] :: string
 				Result = Env[Key]
 				if Count >= 2 and Result ~= nil then
-					Result = Result[KTable[Id1]]
+					Result = Result[Constants[Id1]]
 				end
 				if Count >= 3 and Result ~= nil then
-					Result = Result[KTable[Id2]]
+					Result = Result[Constants[Id2]]
 				end
-				KTable[j] = Result
+				Constants[j] = Result
 			elseif KType == 5 then -- LBC_CONSTANT_TABLE
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
@@ -1071,20 +1071,20 @@ end
 				for _ = 1, Keys do
 					const Key, KLen = ReadVarInt(Bytecode, Offset)
 					Offset += KLen
-					Table[KTable[Key + 1]] = 0
+					Table[Constants[Key + 1]] = 0
 				end
-				KTable[j] = Table
+				Constants[j] = Table
 			elseif KType == 6 then -- LBC_CONSTANT_CLOSURE
 				const FId, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
-				KTable[j] = ProtoTable[FId + 1]
+				Constants[j] = ProtoTable[FId + 1]
 			elseif KType == 7 then -- LBC_CONSTANT_VECTOR
 				const X = buffer.readf32(Bytecode, Offset)
 				const Y = buffer.readf32(Bytecode, Offset + 4)
 				const Z = buffer.readf32(Bytecode, Offset + 8)
 				buffer.readf32(Bytecode, Offset + 12)
 				Offset += 16
-				KTable[j] = vector.create(X, Y, Z)
+				Constants[j] = vector.create(X, Y, Z)
 			elseif KType == 8 then -- LBC_CONSTANT_TABLE_WITH_CONSTANTS
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
@@ -1094,23 +1094,23 @@ end
 					Offset += KLen
 					const ConstantIdx = buffer.readi32(Bytecode, Offset)
 					Offset += 4
-					const KeyValue = KTable[Key + 1]
+					const KeyValue = Constants[Key + 1]
 					if ConstantIdx >= 0 then
-						Table[KeyValue] = KTable[ConstantIdx + 1]
+						Table[KeyValue] = Constants[ConstantIdx + 1]
 					else
 						Table[KeyValue] = 0
 					end
 				end
-				KTable[j] = Table
+				Constants[j] = Table
 			elseif KType == 9 then -- LBC_CONSTANT_INTEGER
 				const IsNegative = buffer.readu8(Bytecode, Offset) ~= 0
 				Offset += 1
 				const Magnitude, Length = ReadVarInt64(Bytecode, Offset)
 				Offset += Length
 				if IsNegative then
-					KTable[j] = if integer then integer.neg(Magnitude :: integer) else -Magnitude :: number
+					Constants[j] = if integer then integer.neg(Magnitude :: integer) else -Magnitude :: number
 				else
-					KTable[j] = Magnitude
+					Constants[j] = Magnitude
 				end
 			elseif KType == 10 then -- LBC_CONSTANT_CLASS_SHAPE
 				const ClassNameIndex, Size = ReadVarInt(Bytecode, Offset)
@@ -1124,14 +1124,23 @@ end
 				for idx = 1, NumMembers do
 					const MId, Size = ReadVarInt(Bytecode, Offset)
 					Offset += Size
-					Members[idx] = KTable[MId + 1] :: string
+					Members[idx] = Constants[MId + 1] :: string
 				end
-				KTable[j] = {
-					ClassName = KTable[ClassNameIndex + 1],
-					Members = Members,
-					NumProperties = NumProperties,
-					NumMethods = NumMethods,
-				}
+				
+				const _ClassName = Constants[ClassNameIndex + 1] :: string
+				const ClassMembers: { [string]: any } = {}
+
+				Constants[j] = setmetatable(ClassMembers, table.freeze({
+					__call = @native function(self: { [string]: any }, Init: { [string]: any }): { [string]: any }
+						const Object = table.clone(ClassMembers)
+
+						for index, value in Init do
+							Object[index] = value
+						end
+
+						return Object
+					end,
+				}))
 			else
 				error("Unexpected constant kind")
 			end
@@ -1232,7 +1241,7 @@ end
 		ProtoTable[i] = table.freeze({
 			Code = Code,
 			SizeCode = SizeCode,
-			Constants = KTable,
+			Constants = Constants,
 			Protos = PTable,
 			NumParams = NumParams,
 			IsVarArg = IsVarArg,
