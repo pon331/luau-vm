@@ -7,7 +7,7 @@ Fast Luau VM written in Luau
 
 # API
 
-## `LuauLoad(Bytecode: buffer, Env: { [string]: any }) -> (...any) -> ...any
+## `LuauLoad(Bytecode: buffer, Env: { [string]: any }) -> (...any) -> ...any`
 Loads bytecode and returns a function to start the execution
 
 # Example Usage
