@@ -17,7 +17,7 @@ const LBC_TYPE_VERSION_MAX = 3
 		const Byte = buffer.readu8(B, Offset + Length)
 		Length += 1
 		Result = bit32.bor(Result, bit32.lshift(bit32.band(Byte, 0x7f), Shift))
-		if bit32.band(Byte, 0x80) == 0 then
+		if not bit32.btest(Byte, 0x80) then
 			break
 		end
 		Shift += 7
@@ -1231,7 +1231,7 @@ end
 		end
 
 		if LuauVersion >= 12 then
-			if bit32.band(Flags, 8) ~= 0 then -- LPF_INLINABLE
+			if bit32.btest(Flags, 8) then -- LPF_INLINABLE
 				const _, CostSize = ReadVarInt64(Bytecode, Offset)
 				Offset += CostSize
 			end
