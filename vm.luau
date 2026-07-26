@@ -37,7 +37,7 @@ if integer then
 			const Byte = buffer.readu8(B, Offset + Length)
 			Length += 1
 			Result = integer.bor(Result, integer.lshift(integer.band(integer.create(Byte), band_int :: integer), integer.create(Shift)))
-			if bit32.band(Byte, 0x80) == 0 then
+			if not bit32.btest(Byte, 0x80) then
 				break
 			end
 			Shift += 7
