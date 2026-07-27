@@ -19,7 +19,7 @@ const Bytecode = buffer.fromstring("\x0c\x03\x02\x05\x70\x72\x69\x6e\x74\x12\x48
 -- Example bytecode: print("Hello from Luau vm") return 0
 
 const Execute = LuauLoad(Bytecode, getfenv())
-const ReturnedValue = Execute() - start the execution
+const ReturnedValue = Execute() -- start the execution
 print(ReturnedValue) -- '0'
 
 ```
