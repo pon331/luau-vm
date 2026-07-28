@@ -709,11 +709,7 @@ export type Proto = {
 						if D >= 0x8000 then
 							D -= 0x10000
 						end
-						const ProtoRef = Constants[D + 1]
-						local Proto: Proto
-
-						Proto = ProtoRef :: Proto
-
+						const Proto: Proto = Constants[D + 1] :: Proto
 						const ProtoNups = Proto.Nups
 						const ClosureUpvals = table.create(ProtoNups) :: { Upvalue }
 
