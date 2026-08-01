@@ -1,6 +1,7 @@
 --!native
 --!optimize 2
 --!strict
+--!nolint LocalShadow
 
 const LBC_VERSION_MIN = 3
 const LBC_VERSION_MAX = 13
@@ -61,6 +62,7 @@ export type Upvalue = {
 }
 
 export type Proto = {
+	read FunId: number,
 	read Code: buffer,
 	read SizeCode: number,
 	read Constants: { any },
@@ -74,6 +76,7 @@ export type Proto = {
 	read LineInfo: { number }?,
 }
 
+const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 @native const function LuauExecute(MainProto: Proto, Env: { [string]: any }, Upvals: { Upvalue }, Args: { [number]: any, n: number }): ...any
 	const NumArgs = Args.n
 	const Code = MainProto.Code
@@ -245,10 +248,12 @@ export type Proto = {
 						const Proto = Protos[bit32.rshift(Instruction, 16) + 1] :: Proto
 						const Nups = Proto.Nups
 						const ClosureUpvals = table.create(Nups) :: { Upvalue }
-
-						Stack[A] = @native function(...: any): ...any
+						
+						const Closure = @native function(...: any): ...any
 							return LuauExecute(Proto, Env, ClosureUpvals, table.pack(...))
 						end
+						Stack[A] = Closure
+						ClosureFunIds[Closure] = Proto.FunId
 
 						for i = 1, Nups do
 							const Aux = buffer.readu32(Code, PC * 4)
@@ -257,7 +262,11 @@ export type Proto = {
 							const CaptureIndex = bit32.band(bit32.rshift(Aux, 16), 0xFF) + 1
 
 							if CaptureType == 0 then
-								ClosureUpvals[i] = { value = Stack[CaptureIndex], store = nil, index = nil }
+								ClosureUpvals[i] = {
+									value = Stack[CaptureIndex],
+									store = nil,
+									index = nil
+								}
 							elseif CaptureType == 1 then
 								const ExistingUpvalue = OpenUpvalues[CaptureIndex]
 								if ExistingUpvalue then
@@ -718,9 +727,11 @@ export type Proto = {
 						const ProtoNups = Proto.Nups
 						const ClosureUpvals = table.create(ProtoNups) :: { Upvalue }
 
-						Stack[A] = @native function(...: any): ...any
+						const Closure = @native function(...: any): ...any
 							return LuauExecute(Proto, Env, ClosureUpvals, table.pack(...))
 						end
+						Stack[A] = Closure
+						ClosureFunIds[Closure] = Proto.FunId
 
 						for i = 1, ProtoNups do
 							const Aux = buffer.readu32(Code, PC * 4)
@@ -728,7 +739,11 @@ export type Proto = {
 							const CaptureType = bit32.band(bit32.rshift(Aux, 8), 0xFF)
 							const CaptureIndex = bit32.band(bit32.rshift(Aux, 16), 0xFF) + 1
 							if CaptureType == 0 then
-								ClosureUpvals[i] = { value = Stack[CaptureIndex], store = nil, index = nil }
+								ClosureUpvals[i] = {
+									value = Stack[CaptureIndex],
+									store = nil,
+									index = nil
+								}
 							elseif CaptureType == 1 then
 								const ExistingUpvalue = OpenUpvalues[CaptureIndex]
 								if ExistingUpvalue then
@@ -930,11 +945,27 @@ export type Proto = {
 							end
 						end
 					elseif Opcode == 88 then -- CMPPROTO
+						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
 						end
-						PC += D
+						const FunId = buffer.readu32(Code, PC * 4)
+						PC += 1
+						
+						const Closure = Stack[A]
+						if type(Closure) ~= "function" then
+							PC += D - 1
+						else
+							const ClosureFunId = ClosureFunIds[Closure :: (...any) -> ...any]
+							if not ClosureFunId or ClosureFunId ~= FunId then
+								PC += D - 1
+							end
+						end
+						
+						-- Opcode 89 support soon
+					elseif Opcode == 89 then -- NEWCLASS
+						error("NEWCLASS is not supported yet")
 					else
 						error("Unknown opcode")
 					end
@@ -990,6 +1021,7 @@ end
 	const ProtoTable = table.create(ProtoCount) :: { Proto }
 
 	for i = 1, ProtoCount do
+		const FunId = i - 1
 		local ProtoSize = 0
 		if LuauVersion >= 12 then
 			const PSize, PLength = ReadVarInt(Bytecode, Offset)
@@ -1004,7 +1036,7 @@ end
 		const IsVarArg = buffer.readu8(Bytecode, Offset + 3) ~= 0
 		Offset += 4
 
-		local Flags: number = 0
+		local Flags = 0
 
 		if LuauVersion >= 4 then
 			Flags = buffer.readu8(Bytecode, Offset)
@@ -1083,11 +1115,11 @@ end
 				const X = buffer.readf32(Bytecode, Offset)
 				const Y = buffer.readf32(Bytecode, Offset + 4)
 				const Z = buffer.readf32(Bytecode, Offset + 8)
-                if VECTOR_HAS_W then
+				if VECTOR_HAS_W then
 					Constants[j] = vector.create(X, Y, Z, buffer.readf64(Bytecode, Offset + 12))
 				else
 					Constants[j] = vector.create(X, Y, Z)
-                end
+				end
 				Offset += 16
 			elseif KType == 8 then -- LBC_CONSTANT_TABLE_WITH_CONSTANTS
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
@@ -1130,7 +1162,7 @@ end
 					Offset += Size
 					Members[idx] = Constants[MId + 1] :: string
 				end
-				
+
 				const _ClassName = Constants[ClassNameIndex + 1] :: string
 				const ClassMembers: { [string]: any } = {}
 
@@ -1149,11 +1181,11 @@ end
 				const X = buffer.readf64(Bytecode, Offset)
 				const Y = buffer.readf64(Bytecode, Offset + 8)
 				const Z = buffer.readf64(Bytecode, Offset + 16)
-                if VECTOR_HAS_W then
+				if VECTOR_HAS_W then
 					Constants[j] = vector.create(X, Y, Z, buffer.readf64(Bytecode, Offset + 24))
 				else
 					Constants[j] = vector.create(X, Y, Z)
-                end
+				end
 				Offset += 32
 			else
 				error("Unexpected constant kind")
@@ -1253,6 +1285,7 @@ end
 		end
 
 		ProtoTable[i] = table.freeze({
+			FunId = FunId,
 			Code = Code,
 			SizeCode = SizeCode,
 			Constants = Constants,
