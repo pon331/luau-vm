@@ -4,6 +4,7 @@ Fast Luau VM written in Luau
 # Features
 - Modern `class` syntax and 64-bit integers are supported
 - Uses native codegen for maximum speed
+- Currently supported Luau version: `0.732` or lower
 
 # API
 
