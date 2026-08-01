@@ -11,6 +11,7 @@ const LBC_TYPE_VERSION_MAX = 3
 -- TYPE_VERSION_TARGET = 3
 
 const LUA_VECTOR_SIZE = 3
+const VECTOR_HAS_W = LUA_VECTOR_SIZE == 4
 
 @native const function ReadVarInt(B: buffer, Offset: number): (number, number)
 	local Result = 0
@@ -1082,9 +1083,12 @@ end
 				const X = buffer.readf32(Bytecode, Offset)
 				const Y = buffer.readf32(Bytecode, Offset + 4)
 				const Z = buffer.readf32(Bytecode, Offset + 8)
-				buffer.readf32(Bytecode, Offset + 12)
+                if VECTOR_HAS_W then
+					Constants[j] = vector.create(X, Y, Z, buffer.readf64(Bytecode, Offset + 12))
+				else
+					Constants[j] = vector.create(X, Y, Z)
+                end
 				Offset += 16
-				Constants[j] = vector.create(X, Y, Z)
 			elseif KType == 8 then -- LBC_CONSTANT_TABLE_WITH_CONSTANTS
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
@@ -1145,9 +1149,12 @@ end
 				const X = buffer.readf64(Bytecode, Offset)
 				const Y = buffer.readf64(Bytecode, Offset + 8)
 				const Z = buffer.readf64(Bytecode, Offset + 16)
-				buffer.readf64(Bytecode, Offset + 24)
+                if VECTOR_HAS_W then
+					Constants[j] = vector.create(X, Y, Z, buffer.readf64(Bytecode, Offset + 24))
+				else
+					Constants[j] = vector.create(X, Y, Z)
+                end
 				Offset += 32
-				Constants[j] = vector.create(X, Y, Z)
 			else
 				error("Unexpected constant kind")
 			end
