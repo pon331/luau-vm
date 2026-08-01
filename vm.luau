@@ -3,10 +3,14 @@
 --!strict
 
 const LBC_VERSION_MIN = 3
-const LBC_VERSION_MAX = 12
+const LBC_VERSION_MAX = 13
+-- VERSION_TARGET = 9
 
 const LBC_TYPE_VERSION_MIN = 1
 const LBC_TYPE_VERSION_MAX = 3
+-- TYPE_VERSION_TARGET = 3
+
+const LUA_VECTOR_SIZE = 3
 
 @native const function ReadVarInt(B: buffer, Offset: number): (number, number)
 	local Result = 0
@@ -1137,6 +1141,13 @@ end
 						return Object
 					end,
 				}))
+			elseif KType == 11 then -- LBC_CONSTANT_VECTORD
+				const X = buffer.readf64(Bytecode, Offset)
+				const Y = buffer.readf64(Bytecode, Offset + 8)
+				const Z = buffer.readf64(Bytecode, Offset + 16)
+				buffer.readf64(Bytecode, Offset + 24)
+				Offset += 32
+				Constants[j] = vector.create(X, Y, Z)
 			else
 				error("Unexpected constant kind")
 			end
