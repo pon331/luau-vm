@@ -7,6 +7,8 @@ const LBC_VERSION_MIN = 3
 const LBC_VERSION_MAX = 13
 -- VERSION_TARGET = 9
 
+const LBC_VERSION_CLASSES = 100 -- Experimental version
+
 const LBC_TYPE_VERSION_MIN = 1
 const LBC_TYPE_VERSION_MAX = 3
 -- TYPE_VERSION_TARGET = 3
@@ -984,7 +986,7 @@ end
 	if LuauVersion == 0 then
 		error(buffer.readstring(Bytecode, Offset, buffer.len(Bytecode) - Offset))
 	end
-	if LuauVersion < LBC_VERSION_MIN or LuauVersion > LBC_VERSION_MAX then
+	if LuauVersion < LBC_VERSION_MIN or LuauVersion > LBC_VERSION_MAX or LuauVersion ~= LBC_VERSION_CLASSES	then
 		error(`Bytecode version mismatch (expected [{LBC_VERSION_MIN}..{LBC_VERSION_MAX}], got {LuauVersion})`)
 	end
 	local TypesVersion = 0
