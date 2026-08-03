@@ -24,7 +24,7 @@ const VECTOR_HAS_W = LUA_VECTOR_SIZE == 4
 	while true do
 		const Byte = buffer.readu8(B, Offset + Length)
 		Length += 1
-		Result = bit32.bor(Result, bit32.lshift(bit32.band(Byte, 0x7f), Shift))
+		Result = bit32.bor(Result, bit32.lshift(bit32.band(Byte, 0x7F), Shift))
 		if not bit32.btest(Byte, 0x80) then
 			break
 		end
@@ -36,7 +36,7 @@ end
 
 local ReadVarInt64: (B: buffer, Offset: number) -> (integer, number)
 if integer then
-	const band_int = integer.create(0x7f)
+	const Shift = integer.create(0x7F)
 	ReadVarInt64 = @native function(B: buffer, Offset: number): (integer, number)
 		local Result = integer.create(0)
 		local Shift = 0
@@ -44,7 +44,7 @@ if integer then
 		while true do
 			const Byte = buffer.readu8(B, Offset + Length)
 			Length += 1
-			Result = integer.bor(Result, integer.lshift(integer.band(integer.create(Byte), band_int :: integer), integer.create(Shift)))
+			Result = integer.bor(Result, integer.lshift(integer.band(integer.create(Byte), Shift :: integer), integer.create(Shift)))
 			if not bit32.btest(Byte, 0x80) then
 				break
 			end
@@ -823,7 +823,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							D -= 0x10000
 						end
 						const Aux = buffer.readu32(Code, PC * 4)
-						const NotBit = bit32.btest(Aux, 0x80000000)
+						const NotBit = bit32.btest(Aux, 0x8000_0000)
 						const IsNil = Stack[A] == nil
 
 						PC += if IsNil ~= NotBit then D else 1
@@ -835,7 +835,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						end
 						const Aux = buffer.readu32(Code, PC * 4)
 						const KB = bit32.btest(Aux, 1)
-						const NotBit = bit32.btest(Aux, 0x80000000)
+						const NotBit = bit32.btest(Aux, 0x8000_0000)
 						const Ra = Stack[A]
 						const Matches = type(Ra) == "boolean" and Ra == KB
 
@@ -847,8 +847,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							D -= 0x10000
 						end
 						const Aux = buffer.readu32(Code, PC * 4)
-						const NotBit = bit32.btest(Aux, 0x80000000)
-						const KV = Constants[bit32.band(Aux, 0xFFFFFF) + 1]
+						const NotBit = bit32.btest(Aux, 0x8000_0000)
+						const KV = Constants[bit32.band(Aux, 0x00FF_FFFF) + 1]
 						const Ra = Stack[A]
 						const Matches = type(Ra) == "number" and Ra == KV
 
@@ -860,8 +860,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							D -= 0x10000
 						end
 						const Aux = buffer.readu32(Code, PC * 4)
-						const KVIndex = bit32.band(Aux, 0xFFFFFF) + 1
-						const NotBit = bit32.btest(Aux, 0x80000000)
+						const KVIndex = bit32.band(Aux, 0x00FF_FFFF) + 1
+						const NotBit = bit32.btest(Aux, 0x8000_0000)
 						const KV = Constants[KVIndex]
 						const Ra = Stack[A]
 						const Matches = type(Ra) == "string" and Ra == KV
