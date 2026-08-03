@@ -36,7 +36,7 @@ end
 
 local ReadVarInt64: (B: buffer, Offset: number) -> (integer, number)
 if integer then
-	const Shift = integer.create(0x7F)
+	const ShiftInt = integer.create(0x7F)
 	ReadVarInt64 = @native function(B: buffer, Offset: number): (integer, number)
 		local Result = integer.create(0)
 		local Shift = 0
@@ -44,7 +44,7 @@ if integer then
 		while true do
 			const Byte = buffer.readu8(B, Offset + Length)
 			Length += 1
-			Result = integer.bor(Result, integer.lshift(integer.band(integer.create(Byte), Shift :: integer), integer.create(Shift)))
+			Result = integer.bor(Result, integer.lshift(integer.band(integer.create(Byte), ShiftInt :: integer), integer.create(Shift)))
 			if not bit32.btest(Byte, 0x80) then
 				break
 			end
@@ -986,7 +986,7 @@ end
 	if LuauVersion == 0 then
 		error(buffer.readstring(Bytecode, Offset, buffer.len(Bytecode) - Offset))
 	end
-	if LuauVersion < LBC_VERSION_MIN or LuauVersion > LBC_VERSION_MAX and LuauVersion ~= LBC_VERSION_CLASSES then
+	if (LuauVersion < LBC_VERSION_MIN or LuauVersion > LBC_VERSION_MAX) and LuauVersion ~= LBC_VERSION_CLASSES then
 		error(`Bytecode version mismatch (expected [{LBC_VERSION_MIN}..{LBC_VERSION_MAX}], got {LuauVersion})`)
 	end
 	local TypesVersion = 0
