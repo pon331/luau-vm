@@ -986,7 +986,7 @@ end
 	if LuauVersion == 0 then
 		error(buffer.readstring(Bytecode, Offset, buffer.len(Bytecode) - Offset))
 	end
-	if LuauVersion < LBC_VERSION_MIN or LuauVersion > LBC_VERSION_MAX or LuauVersion ~= LBC_VERSION_CLASSES	then
+	if LuauVersion < LBC_VERSION_MIN or LuauVersion > LBC_VERSION_MAX and LuauVersion ~= LBC_VERSION_CLASSES then
 		error(`Bytecode version mismatch (expected [{LBC_VERSION_MIN}..{LBC_VERSION_MAX}], got {LuauVersion})`)
 	end
 	local TypesVersion = 0
