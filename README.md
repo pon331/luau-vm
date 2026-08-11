@@ -1,5 +1,5 @@
 # luau-vm
-Fast Luau VM written in Luau
+Modern Luau VM written in Luau
 
 # Features
 - Modern `class` syntax and 64-bit integers are supported
