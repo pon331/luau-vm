@@ -3,8 +3,24 @@
 --!strict
 --!nolint LocalShadow
 
+const bit32 = bit32
+const buffer = buffer
+const pcall = pcall
+const integer = integer
+const vector = vector
+const table = table
+const rawget = rawget
+const getmetatable = getmetatable
+const error = error
+const type = type
+const typeof = typeof
+const string = string
+const next = next
+const tonumber = tonumber
+const setmetatable = setmetatable
+
 const LBC_VERSION_MIN = 3
-const LBC_VERSION_MAX = 13
+const LBC_VERSION_MAX = 14
 -- VERSION_TARGET = 9
 
 const LBC_VERSION_CLASSES = 100 -- Experimental version
@@ -76,10 +92,65 @@ export type Proto = {
 	read LineDefined: number,
 	read DebugName: string,
 	read LineInfo: { number }?,
+	read ChunkName: string,
 }
 
+type PackedValues = { [number]: any, n: number }
+type Env = { [string]: any }
+type LuauExecuteFunc = (MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues, PCRef: { number }) -> ...any
+
+@native const function SafeGetResult(LuauExecute: LuauExecuteFunc, MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues, PCRef: { number }): (string, PackedValues)
+	return "no error", table.pack(LuauExecute(MainProto, Env, Upvals, Args, PCRef))
+end
+
+@native const function IsErrorFormatted(Message: string, Chunk: string): boolean
+	if string.sub(Message, 1, #Chunk) ~= Chunk then
+		return false
+	end
+	local Index = #Chunk + 1
+	if string.byte(Message, Index, Index) ~= 58 then
+		return false
+	end
+	Index += 1
+	local HasLineNumber = false
+	while Index <= #Message do
+		const Byte = string.byte(Message, Index)
+		if Byte < 48 or Byte > 57 then
+			break
+		end
+		if not HasLineNumber then
+			HasLineNumber = true
+		end
+		Index += 1
+	end
+	const NextIndex = Index + 1
+	return HasLineNumber and (string.byte(Message, Index, Index) == 58 and string.byte(Message, NextIndex, NextIndex) == 32)
+end
+
+@native const function SafeExecute(LuauExecute: LuauExecuteFunc, MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues): ...any
+	const PCRef = { 0 }
+	const Success, ErrorMessage: unknown, Result = pcall(SafeGetResult, LuauExecute, MainProto, Env, Upvals, Args, PCRef)
+	if not Success then
+		if type(ErrorMessage) ~= "string" then
+			error(ErrorMessage)
+		end
+		const ChunkName = MainProto.ChunkName
+		if IsErrorFormatted(ErrorMessage :: string, ChunkName) then
+			error(ErrorMessage, 0)
+		end
+		const NormalizedErrorMessage: string = string.match(ErrorMessage :: string, "^[^:]+:%d+:%s*(.*)$") or ErrorMessage :: string
+		const LineInfo = MainProto.LineInfo
+		if LineInfo then
+			error(`{ChunkName}:{LineInfo[PCRef[1] + 1]}: {NormalizedErrorMessage}`, 0)
+		else
+			error(`{ChunkName}:0: {NormalizedErrorMessage}`, 0)
+		end
+	end
+	return table.unpack(Result, 1, Result.n)
+end
+
 const ClosureFunIds: { [(...any) -> ...any]: number } = {}
-@native const function LuauExecute(MainProto: Proto, Env: { [string]: any }, Upvals: { Upvalue }, Args: { [number]: any, n: number }): ...any
+@native const function LuauExecute(MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues, PCRef: { number }): ...any
 	const NumArgs = Args.n
 	const Code = MainProto.Code
 	const Constants = MainProto.Constants
@@ -90,8 +161,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 	const CodeLength = MainProto.SizeCode
 
 	const Stack = table.create(MaxStackSize) :: { any }
-	local VarArgs: { any } = {}
-	local VarArgAmount: number = 0
+	local VarArgs: { any }
+	local VarArgAmount = 0
 
 	const ParamsAmount = if NumArgs < NumParams then NumArgs else NumParams
 	table.move(Args, 1, ParamsAmount, 1, Stack)
@@ -117,6 +188,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 		end
 		const Instruction = buffer.readu32(Code, PC * 4)
 		const Opcode = bit32.band(Instruction, 0xFF)
+		PCRef[1] = PC
 		PC += 1
 		if Opcode < 44 then
 			if Opcode < 22 then
@@ -205,10 +277,10 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							local Result: any?
 							const Key = Constants[Id0] :: string
 							Result = Env[Key]
-							if Count >= 2 and Result ~= nil then
+							if Count >= 2 then
 								Result = Result[Constants[Id1]]
 							end
-							if Count >= 3 and Result ~= nil then
+							if Count >= 3 then
 								Result = Result[Constants[Id2]]
 							end
 							Stack[A] = Result
@@ -250,9 +322,9 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						const Proto = Protos[bit32.rshift(Instruction, 16) + 1] :: Proto
 						const Nups = Proto.Nups
 						const ClosureUpvals = table.create(Nups) :: { Upvalue }
-						
+
 						const Closure = @native function(...: any): ...any
-							return LuauExecute(Proto, Env, ClosureUpvals, table.pack(...))
+							return SafeExecute(LuauExecute, Proto, Env, ClosureUpvals, table.pack(...))
 						end
 						Stack[A] = Closure
 						ClosureFunIds[Closure] = Proto.FunId
@@ -730,7 +802,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						const ClosureUpvals = table.create(ProtoNups) :: { Upvalue }
 
 						const Closure = @native function(...: any): ...any
-							return LuauExecute(Proto, Env, ClosureUpvals, table.pack(...))
+							return SafeExecute(LuauExecute, Proto, Env, ClosureUpvals, table.pack(...))
 						end
 						Stack[A] = Closure
 						ClosureFunIds[Closure] = Proto.FunId
@@ -801,11 +873,21 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					elseif Opcode == 76 then -- FORGPREP
 						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
 						const Iterator = Stack[A]
-						if type(Iterator) == "function" then
-						elseif type(Iterator) == "table" then
-							Stack[A] = next
-							Stack[A + 1] = Iterator
-							Stack[A + 2] = nil
+						const IteratorType = type(Iterator)
+						if IteratorType == "function" then
+						elseif IteratorType == "table" or IteratorType == "userdata" then
+							const Meta = getmetatable(Iterator)
+							const __iter: ((self: any) -> (() -> (...any?), any, any))? = if type(Meta) == "table" then rawget(Meta, "__iter") else nil
+							if __iter then
+								const CustomIterator, State, Control = __iter(Iterator)
+								Stack[A] = CustomIterator
+								Stack[A + 1] = State
+								Stack[A + 2] = Control
+							else
+								Stack[A] = next
+								Stack[A + 1] = Iterator
+								Stack[A + 2] = nil
+							end
 						else
 							error(`attempt to iterate over a {typeof(Iterator)} value`)
 						end
@@ -954,7 +1036,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						end
 						const FunId = buffer.readu32(Code, PC * 4)
 						PC += 1
-						
+
 						const Closure = Stack[A]
 						if type(Closure) ~= "function" then
 							PC += D - 1
@@ -964,9 +1046,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 								PC += D - 1
 							end
 						end
-						
-						-- Opcode 89 support soon
-					elseif Opcode == 89 then -- NEWCLASS
+					elseif Opcode == 89 then -- FASTPCALL
+					elseif Opcode == 90 then -- NEWCLASS
 						error("NEWCLASS is not supported yet")
 					else
 						error("Unknown opcode")
@@ -979,7 +1060,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 end
 
 
-@native const function LuauLoad(Bytecode: buffer, Env: { [string]: any }): (...any) -> ...any
+@native const function LuauLoad(Bytecode: buffer, Env: { [string]: any }, ChunkName: string?): (...any) -> ...any
 	local Offset = 0
 	const LuauVersion = buffer.readu8(Bytecode, Offset)
 	Offset += 1
@@ -1060,7 +1141,7 @@ end
 
 		const SizeK, Length = ReadVarInt(Bytecode, Offset)
 		Offset += Length
-		const Constants = table.create(SizeK, nil)
+		const Constants: { any } = table.create(SizeK, nil)
 
 		for j = 1, SizeK do
 			const KType = buffer.readu8(Bytecode, Offset)
@@ -1091,14 +1172,16 @@ end
 				local Result: any?
 
 				const Key = Constants[Id0] :: string
-				Result = Env[Key]
-				if Count >= 2 and Result ~= nil then
-					Result = Result[Constants[Id1]]
-				end
-				if Count >= 3 and Result ~= nil then
-					Result = Result[Constants[Id2]]
-				end
-				Constants[j] = Result
+				const Success = pcall(function()
+					Result = Env[Key]
+					if Count >= 2 then
+						Result = Result[Constants[Id1]]
+					end
+					if Count >= 3 then
+						Result = Result[Constants[Id2]]
+					end
+				end)
+				Constants[j] = if Success then Result else nil
 			elseif KType == 5 then -- LBC_CONSTANT_TABLE
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
@@ -1159,10 +1242,10 @@ end
 				Offset += Size
 				const NumMembers = NumProperties + NumMethods
 				const Members = table.create(NumMembers) :: { string }
-				for idx = 1, NumMembers do
+				for i = 1, NumMembers do
 					const MId, Size = ReadVarInt(Bytecode, Offset)
 					Offset += Size
-					Members[idx] = Constants[MId + 1] :: string
+					Members[i] = Constants[MId + 1] :: string
 				end
 
 				const _ClassName = Constants[ClassNameIndex + 1] :: string
@@ -1285,7 +1368,7 @@ end
 			end
 			Offset = ProtoStartOffset + ProtoSize
 		end
-
+		
 		ProtoTable[i] = table.freeze({
 			FunId = FunId,
 			Code = Code,
@@ -1299,6 +1382,7 @@ end
 			LineDefined = LineDefined,
 			DebugName = DebugName,
 			LineInfo = LineInfo,
+			ChunkName = ChunkName or DebugName
 		})
 	end
 
@@ -1308,15 +1392,16 @@ end
 	const MainProto = ProtoTable[MainProtoIndex + 1]
 
 	return @native function(...: any): ...any
-		const Upvals = table.create(MainProto.Nups) :: { Upvalue }
-		for i = 1, MainProto.Nups do
+		const Nups = MainProto.Nups
+		const Upvals = table.create(Nups) :: { Upvalue }
+		for i = 1, Nups do
 			Upvals[i] = {
 				value = Env,
 				store = nil,
 				index = nil,
 			}
 		end
-		return LuauExecute(MainProto, Env, Upvals, table.pack(...))
+		return SafeExecute(LuauExecute, MainProto, Env, Upvals, table.pack(...))
 	end
 end
 
