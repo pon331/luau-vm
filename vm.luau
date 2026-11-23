@@ -2,6 +2,7 @@
 --!optimize 2
 --!strict
 --!nolint LocalShadow
+--!nolint RedundantNativeAttribute
 
 const bit32 = bit32
 const buffer = buffer
@@ -32,7 +33,8 @@ const LBC_TYPE_VERSION_MAX = 3
 const LUA_VECTOR_SIZE = 3
 const VECTOR_HAS_W = LUA_VECTOR_SIZE == 4
 
-@native const function ReadVarInt(B: buffer, Offset: number): (number, number)
+@[native, checked]
+const function ReadVarInt(B: buffer, Offset: number): (number, number)
 	local Result = 0
 	local Shift = 0
 	local Length = 0
@@ -49,18 +51,20 @@ const VECTOR_HAS_W = LUA_VECTOR_SIZE == 4
 
 	return Result, Length
 end
-
-local ReadVarInt64: (B: buffer, Offset: number) -> (integer, number)
+local ReadVarInt64: (B: buffer, Offset: number) -> (integer | number, number)
 if integer then
 	const ShiftInt = integer.create(0x7F)
-	ReadVarInt64 = @native function(B: buffer, Offset: number): (integer, number)
+	ReadVarInt64 = @native @checked function(B: buffer, Offset: number): (integer, number)
 		local Result = integer.create(0)
 		local Shift = 0
 		local Length = 0
 		while true do
 			const Byte = buffer.readu8(B, Offset + Length)
 			Length += 1
-			Result = integer.bor(Result, integer.lshift(integer.band(integer.create(Byte), ShiftInt :: integer), integer.create(Shift)))
+			Result = integer.bor(
+				Result,
+				integer.lshift(integer.band(integer.create(Byte), ShiftInt :: integer), integer.create(Shift))
+			)
 			if not bit32.btest(Byte, 0x80) then
 				break
 			end
@@ -76,7 +80,7 @@ end
 export type Upvalue = {
 	value: any,
 	store: { any }?,
-	index: number?
+	index: number?,
 }
 
 export type Proto = {
@@ -97,13 +101,28 @@ export type Proto = {
 
 type PackedValues = { [number]: any, n: number }
 type Env = { [string]: any }
-type LuauExecuteFunc = (MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues, PCRef: { number }) -> ...any
+type LuauExecuteFunc = (
+	MainProto: Proto,
+	Env: Env,
+	Upvals: { Upvalue },
+	Args: PackedValues,
+	PCRef: { number }
+) -> ...any
 
-@native const function SafeGetResult(LuauExecute: LuauExecuteFunc, MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues, PCRef: { number }): (string, PackedValues)
+@[native, checked]
+const function SafeGetResult(
+	LuauExecute: LuauExecuteFunc,
+	MainProto: Proto,
+	Env: Env,
+	Upvals: { Upvalue },
+	Args: PackedValues,
+	PCRef: { number }
+): (string, PackedValues)
 	return "no error", table.pack(LuauExecute(MainProto, Env, Upvals, Args, PCRef))
 end
 
-@native const function IsErrorFormatted(Message: string, Chunk: string): boolean
+@[native, checked]
+const function IsErrorFormatted(Message: string, Chunk: string): boolean
 	if string.sub(Message, 1, #Chunk) ~= Chunk then
 		return false
 	end
@@ -124,12 +143,21 @@ end
 		Index += 1
 	end
 	const NextIndex = Index + 1
-	return HasLineNumber and (string.byte(Message, Index, Index) == 58 and string.byte(Message, NextIndex, NextIndex) == 32)
+	return HasLineNumber
+		and (string.byte(Message, Index, Index) == 58 and string.byte(Message, NextIndex, NextIndex) == 32)
 end
 
-@native const function SafeExecute(LuauExecute: LuauExecuteFunc, MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues): ...any
+@[native, checked]
+const function SafeExecute(
+	LuauExecute: LuauExecuteFunc,
+	MainProto: Proto,
+	Env: Env,
+	Upvals: { Upvalue },
+	Args: PackedValues
+): ...any
 	const PCRef = { 0 }
-	const Success, ErrorMessage: unknown, Result = pcall(SafeGetResult, LuauExecute, MainProto, Env, Upvals, Args, PCRef)
+	const Success, ErrorMessage: unknown, Result =
+		pcall(SafeGetResult, LuauExecute, MainProto, Env, Upvals, Args, PCRef)
 	if not Success then
 		if type(ErrorMessage) ~= "string" then
 			error(ErrorMessage)
@@ -138,7 +166,8 @@ end
 		if IsErrorFormatted(ErrorMessage :: string, ChunkName) then
 			error(ErrorMessage, 0)
 		end
-		const NormalizedErrorMessage: string = string.match(ErrorMessage :: string, "^[^:]+:%d+:%s*(.*)$") or ErrorMessage :: string
+		const NormalizedErrorMessage: string = string.match(ErrorMessage :: string, "^[^:]+:%d+:%s*(.*)$")
+			or ErrorMessage :: string
 		const LineInfo = MainProto.LineInfo
 		if LineInfo then
 			error(`{ChunkName}:{LineInfo[PCRef[1] + 1]}: {NormalizedErrorMessage}`, 0)
@@ -150,7 +179,15 @@ end
 end
 
 const ClosureFunIds: { [(...any) -> ...any]: number } = {}
-@native const function LuauExecute(MainProto: Proto, Env: Env, Upvals: { Upvalue }, Args: PackedValues, PCRef: { number }): ...any
+
+@[native, checked]
+const function LuauExecute(
+	MainProto: Proto,
+	Env: Env,
+	Upvals: { Upvalue },
+	Args: PackedValues,
+	PCRef: { number }
+): ...any
 	const NumArgs = Args.n
 	const Code = MainProto.Code
 	const Constants = MainProto.Constants
@@ -194,42 +231,42 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 			if Opcode < 22 then
 				if Opcode < 11 then
 					if Opcode == 2 then -- LOADNIL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						Stack[A] = nil
 					elseif Opcode == 3 then -- LOADB
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF)
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF)
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8)
+						const C = bit32.extract(Instruction, 24, 8)
 						Stack[A] = B ~= 0
 						PC += C
 					elseif Opcode == 4 then -- LOADN
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
 						end
 						Stack[A] = D
 					elseif Opcode == 5 then -- LOADK
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const D = bit32.rshift(Instruction, 16) + 1
 						Stack[A] = Constants[D]
 					elseif Opcode == 6 then -- MOVE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						Stack[A] = Stack[B]
 					elseif Opcode == 7 then -- GETGLOBAL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Key = Constants[buffer.readu32(Code, PC * 4) + 1]
 						PC += 1
 						Stack[A] = Env[Key]
 					elseif Opcode == 8 then -- SETGLOBAL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Key = Constants[buffer.readu32(Code, PC * 4) + 1]
 						PC += 1
 						Env[Key] = Stack[A]
 					elseif Opcode == 9 then -- GETUPVAL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Upvalue = Upvals[B]
 						const Store = Upvalue.store
 						if Store then
@@ -238,8 +275,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							Stack[A] = Upvalue.value
 						end
 					elseif Opcode == 10 then -- SETUPVAL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Upvalue = Upvals[B]
 						const Store = Upvalue.store
 						if Store then
@@ -250,7 +287,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					end
 				else
 					if Opcode == 11 then -- CLOSEUPVALS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						for reg, uv in OpenUpvalues do
 							if reg >= A then
 								uv.value = Stack[reg]
@@ -260,7 +297,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							end
 						end
 					elseif Opcode == 12 then -- GETIMPORT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const KV = Constants[bit32.rshift(Instruction, 16) + 1]
 						const Aux = buffer.readu32(Code, PC * 4)
 						PC += 1
@@ -269,9 +306,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							Stack[A] = KV
 						else
 							const Count = bit32.rshift(Aux, 30)
-
-							const Id0 = bit32.band(bit32.rshift(Aux, 20), 1023) + 1
-							const Id1 = bit32.band(bit32.rshift(Aux, 10), 1023) + 1
+							const Id0 = bit32.extract(Aux, 20, 10) + 1
+							const Id1 = bit32.extract(Aux, 10, 10) + 1
 							const Id2 = bit32.band(Aux, 1023) + 1
 
 							local Result: any?
@@ -286,39 +322,39 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							Stack[A] = Result
 						end
 					elseif Opcode == 13 then -- GETTABLE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B][Stack[C]]
 					elseif Opcode == 14 then -- SETTABLE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[B][Stack[C]] = Stack[A]
 					elseif Opcode == 15 then -- GETTABLEKS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						Stack[A] = Stack[B][Constants[Aux]]
 					elseif Opcode == 16 then -- SETTABLEKS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						Stack[B][Constants[Aux]] = Stack[A]
 					elseif Opcode == 17 then -- GETTABLEN
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B][C]
 					elseif Opcode == 18 then -- SETTABLEN
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[B][C] = Stack[A]
 					elseif Opcode == 19 then -- NEWCLOSURE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Proto = Protos[bit32.rshift(Instruction, 16) + 1] :: Proto
 						const Nups = Proto.Nups
 						const ClosureUpvals = table.create(Nups) :: { Upvalue }
@@ -332,14 +368,14 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						for i = 1, Nups do
 							const Aux = buffer.readu32(Code, PC * 4)
 							PC += 1
-							const CaptureType = bit32.band(bit32.rshift(Aux, 8), 0xFF)
-							const CaptureIndex = bit32.band(bit32.rshift(Aux, 16), 0xFF) + 1
+							const CaptureType = bit32.extract(Aux, 8, 8)
+							const CaptureIndex = bit32.extract(Aux, 16, 8) + 1
 
 							if CaptureType == 0 then
 								ClosureUpvals[i] = {
 									value = Stack[CaptureIndex],
 									store = nil,
-									index = nil
+									index = nil,
 								}
 							elseif CaptureType == 1 then
 								const ExistingUpvalue = OpenUpvalues[CaptureIndex]
@@ -359,17 +395,17 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							end
 						end
 					elseif Opcode == 20 then -- NAMECALL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						const Object = Stack[B]
 						Stack[A + 1] = Object
 						Stack[A] = Object[Constants[Aux]]
 					elseif Opcode == 21 then -- CALL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						const NParams = B - 2
 						const NResults = C - 2
 						const Function = Stack[A]
@@ -413,8 +449,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 			else
 				if Opcode < 33 then
 					if Opcode == 22 then -- RETURN
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF)
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8)
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const NResults = B - 2
 
 						for reg, uv in OpenUpvalues do
@@ -456,7 +492,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						end
 						PC += D
 					elseif Opcode == 25 then -- JUMPIF
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						if Stack[A] then
 							local D = bit32.rshift(Instruction, 16)
 							if D >= 0x8000 then
@@ -465,7 +501,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += D
 						end
 					elseif Opcode == 26 then -- JUMPIFNOT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						if not Stack[A] then
 							local D = bit32.rshift(Instruction, 16)
 							if D >= 0x8000 then
@@ -474,7 +510,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += D
 						end
 					elseif Opcode == 27 then -- JUMPIFEQ
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						if Stack[A] == Stack[bit32.band(Aux, 0xFF) + 1] then
 							local D = bit32.rshift(Instruction, 16)
@@ -486,7 +522,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += 1
 						end
 					elseif Opcode == 28 then -- JUMPIFLE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						if Stack[A] <= Stack[bit32.band(Aux, 0xFF) + 1] then
 							local D = bit32.rshift(Instruction, 16)
@@ -498,7 +534,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += 1
 						end
 					elseif Opcode == 29 then -- JUMPIFLT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						if Stack[A] < Stack[bit32.band(Aux, 0xFF) + 1] then
 							local D = bit32.rshift(Instruction, 16)
@@ -510,7 +546,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += 1
 						end
 					elseif Opcode == 30 then -- JUMPIFNOTEQ
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						if Stack[A] ~= Stack[bit32.band(Aux, 0xFF) + 1] then
 							local D = bit32.rshift(Instruction, 16)
@@ -522,7 +558,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += 1
 						end
 					elseif Opcode == 31 then -- JUMPIFNOTLE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						if not (Stack[A] <= Stack[bit32.band(Aux, 0xFF) + 1]) then
 							local D = bit32.rshift(Instruction, 16)
@@ -534,7 +570,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += 1
 						end
 					elseif Opcode == 32 then -- JUMPIFNOTLT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						if not (Stack[A] < Stack[bit32.band(Aux, 0xFF) + 1]) then
 							local D = bit32.rshift(Instruction, 16)
@@ -548,59 +584,59 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					end
 				else
 					if Opcode == 33 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] + Stack[C]
 					elseif Opcode == 34 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] - Stack[C]
 					elseif Opcode == 35 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] * Stack[C]
 					elseif Opcode == 36 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] / Stack[C]
 					elseif Opcode == 37 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] % Stack[C]
 					elseif Opcode == 38 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] ^ Stack[C]
 					elseif Opcode == 39 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] + Constants[C]
 					elseif Opcode == 40 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] - Constants[C]
 					elseif Opcode == 41 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] * Constants[C]
 					elseif Opcode == 42 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] / Constants[C]
 					elseif Opcode == 43 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] % Constants[C]
 					end
 				end
@@ -609,68 +645,68 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 			if Opcode < 66 then
 				if Opcode < 55 then
 					if Opcode == 44 then
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] ^ Constants[C]
 					elseif Opcode == 45 then -- AND
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						const Value = Stack[B]
 						Stack[A] = if not Value then Value else Stack[C]
 					elseif Opcode == 46 then -- OR
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						const Value = Stack[B]
 						Stack[A] = if not Value then Stack[C] else Value
 					elseif Opcode == 47 then -- ANDK
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						const Value = Stack[B]
 						Stack[A] = if not Value then Value else Constants[C]
 					elseif Opcode == 48 then -- ORK
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						const Value = Stack[B]
 						Stack[A] = if not Value then Constants[C] else Value
 					elseif Opcode == 49 then -- CONCAT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF)
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8)
 						local Result = Stack[B]
-						for i = B, C do
-							Result ..= Stack[i + 1]
+						for i = C, B, -1 do
+							Result = Stack[i + 1] .. Result
 						end
 						Stack[A] = Result
 					elseif Opcode == 50 then -- NOT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						Stack[A] = not Stack[B]
 					elseif Opcode == 51 then -- MINUS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						Stack[A] = -Stack[B]
 					elseif Opcode == 52 then -- LENGTH
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						Stack[A] = #Stack[B]
 					elseif Opcode == 53 then -- NEWTABLE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF)
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8)
 						PC += 1
 						Stack[A] = table.create(if B == 0 then 0 else bit32.lshift(1, B - 1))
 					elseif Opcode == 54 then -- DUPTABLE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
 						end
 						const Template = Constants[D + 1] :: { [any]: any }
-						const Table = {} :: { [any]: any }
+						const Table: { [any]: any } = {}
 						for Key, Value in Template do
 							Table[Key] = Value
 						end
@@ -678,9 +714,9 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					end
 				else
 					if Opcode == 55 then -- SETLIST
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF)
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) - 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8)
+						const C = bit32.extract(Instruction, 24, 8) - 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						PC += 1
 						const T = Stack[A]
@@ -692,13 +728,15 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 								TOp = B
 							end
 							Count = TOp - B
-							if Count < 0 then Count = 0 end
+							if Count < 0 then
+								Count = 0
+							end
 						else
 							Count = C
 						end
 						table.move(Stack, B + 1, B + Count, Aux, T)
 					elseif Opcode == 56 then -- FORNPREP
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Limit = tonumber(Stack[A]) :: number
 						const Step = tonumber(Stack[A + 1]) :: number
 						const Index = tonumber(Stack[A + 2]) :: number
@@ -714,7 +752,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += D
 						end
 					elseif Opcode == 57 then -- FORNLOOP
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Limit = Stack[A] :: number
 						const Step = Stack[A + 1] :: number
 						const Index = Stack[A + 2] + Step
@@ -728,7 +766,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += D
 						end
 					elseif Opcode == 58 then -- FORGLOOP
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4)
 						local NumVars = bit32.band(Aux, 0xFF)
 						const Iterator = Stack[A]
@@ -753,7 +791,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							PC += D
 						end
 					elseif Opcode == 59 then -- FORGPREP_INEXT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						if type(Stack[A]) ~= "function" then
 							error(`attempt to iterate over a {typeof(Stack[A])} value`)
 						end
@@ -765,7 +803,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					elseif Opcode == 60 then -- FASTCALL3
 						PC += 1
 					elseif Opcode == 61 then -- FORGPREP_NEXT
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						if type(Stack[A]) ~= "function" then
 							error(`attempt to iterate over a {typeof(Stack[A])} value`)
 						end
@@ -777,8 +815,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					elseif Opcode == 62 then -- NATIVECALL
 						error("NATIVECALL is not supported")
 					elseif Opcode == 63 then -- GETVARARGS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF)
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) - 1
+						const A = bit32.extract(Instruction, 8, 8)
+						const B = bit32.extract(Instruction, 16, 8) - 1
 
 						if B == -1 then
 							table.move(VarArgs, 1, VarArgAmount, A + 1, Stack)
@@ -792,7 +830,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							end
 						end
 					elseif Opcode == 64 then -- DUPCLOSURE
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
@@ -810,13 +848,13 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 						for i = 1, ProtoNups do
 							const Aux = buffer.readu32(Code, PC * 4)
 							PC += 1
-							const CaptureType = bit32.band(bit32.rshift(Aux, 8), 0xFF)
-							const CaptureIndex = bit32.band(bit32.rshift(Aux, 16), 0xFF) + 1
+							const CaptureType = bit32.extract(Aux, 8, 8)
+							const CaptureIndex = bit32.extract(Aux, 16, 8) + 1
 							if CaptureType == 0 then
 								ClosureUpvals[i] = {
 									value = Stack[CaptureIndex],
 									store = nil,
-									index = nil
+									index = nil,
 								}
 							elseif CaptureType == 1 then
 								const ExistingUpvalue = OpenUpvalues[CaptureIndex]
@@ -841,7 +879,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 			else
 				if Opcode < 77 then
 					if Opcode == 66 then -- LOADKX
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						Stack[A] = Constants[Aux]
@@ -856,14 +894,14 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					elseif Opcode == 70 then -- CAPTURE
 						error("CAPTURE executed outside of NEWCLOSURE")
 					elseif Opcode == 71 then -- SUBRK
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Constants[B] - Stack[C]
 					elseif Opcode == 72 then -- DIVRK
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Constants[B] / Stack[C]
 					elseif Opcode == 73 then -- FASTCALL1
 					elseif Opcode == 74 then -- FASTCALL2
@@ -871,13 +909,15 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					elseif Opcode == 75 then -- FASTCALL2K
 						PC += 1
 					elseif Opcode == 76 then -- FORGPREP
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						const Iterator = Stack[A]
 						const IteratorType = type(Iterator)
 						if IteratorType == "function" then
 						elseif IteratorType == "table" or IteratorType == "userdata" then
 							const Meta = getmetatable(Iterator)
-							const __iter: ((self: any) -> (() -> (...any?), any, any))? = if type(Meta) == "table" then rawget(Meta, "__iter") else nil
+							const __iter: ((self: any) -> (() -> ...any?, any, any))? = if type(Meta) == "table"
+								then rawget(Meta, "__iter")
+								else nil
 							if __iter then
 								const CustomIterator, State, Control = __iter(Iterator)
 								Stack[A] = CustomIterator
@@ -899,7 +939,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 					end
 				else
 					if Opcode == 77 then -- JUMPXEQKNIL
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
@@ -910,7 +950,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 
 						PC += if IsNil ~= NotBit then D else 1
 					elseif Opcode == 78 then -- JUMPXEQKB
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
@@ -923,7 +963,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 
 						PC += if Matches ~= NotBit then D else 1
 					elseif Opcode == 79 then -- JUMPXEQKN
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
@@ -936,7 +976,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 
 						PC += if Matches ~= NotBit then D else 1
 					elseif Opcode == 80 then -- JUMPXEQKS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
@@ -950,45 +990,45 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 
 						PC += if Matches ~= NotBit then D else 1
 					elseif Opcode == 81 then -- IDIV
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] // Stack[C]
 					elseif Opcode == 82 then -- IDIVK
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						Stack[A] = Stack[B] // Constants[C]
 					elseif Opcode == 83 then -- GETUDATAKS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						Stack[A] = Stack[B][Constants[Aux]]
 					elseif Opcode == 84 then -- SETUDATAKS
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						Stack[B][Constants[Aux]] = Stack[A]
 					elseif Opcode == 85 then -- NAMECALLUDATA
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						const Object = Stack[B]
 						Stack[A + 1] = Object
 						Stack[A] = Object[Constants[Aux]]
 					elseif Opcode == 86 then -- NEWCLASSMEMBER
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						const Aux = buffer.readu32(Code, PC * 4) + 1
 						PC += 1
 						Stack[A][Constants[Aux]] = Stack[C]
 					elseif Opcode == 87 then -- CALLFB
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
-						const B = bit32.band(bit32.rshift(Instruction, 16), 0xFF) + 1
-						const C = bit32.band(bit32.rshift(Instruction, 24), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
+						const B = bit32.extract(Instruction, 16, 8) + 1
+						const C = bit32.extract(Instruction, 24, 8) + 1
 						PC += 1
 						const NParams = B - 2
 						const NResults = C - 2
@@ -1029,7 +1069,7 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 							end
 						end
 					elseif Opcode == 88 then -- CMPPROTO
-						const A = bit32.band(bit32.rshift(Instruction, 8), 0xFF) + 1
+						const A = bit32.extract(Instruction, 8, 8) + 1
 						local D = bit32.rshift(Instruction, 16)
 						if D >= 0x8000 then
 							D -= 0x10000
@@ -1059,8 +1099,8 @@ const ClosureFunIds: { [(...any) -> ...any]: number } = {}
 	return
 end
 
-
-@native const function LuauLoad(Bytecode: buffer, Env: { [string]: any }, ChunkName: string?): (...any) -> ...any
+@[native, checked]
+const function LuauLoad(Bytecode: buffer, Env: { [string]: any }, ChunkName: string?): (...any) -> ...any
 	local Offset = 0
 	const LuauVersion = buffer.readu8(Bytecode, Offset)
 	Offset += 1
@@ -1075,7 +1115,9 @@ end
 		TypesVersion = buffer.readu8(Bytecode, Offset)
 		Offset += 1
 		if TypesVersion < LBC_TYPE_VERSION_MIN or TypesVersion > LBC_TYPE_VERSION_MAX then
-			error(`Bytecode type version mismatch (expected [{LBC_TYPE_VERSION_MIN}..{LBC_TYPE_VERSION_MAX}], got {TypesVersion})`)
+			error(
+				`Bytecode type version mismatch (expected [{LBC_TYPE_VERSION_MIN}..{LBC_TYPE_VERSION_MAX}], got {TypesVersion})`
+			)
 		end
 	end
 
@@ -1185,7 +1227,7 @@ end
 			elseif KType == 5 then -- LBC_CONSTANT_TABLE
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
-				const Table = {} :: { [any]: any }
+				const Table: { [any]: any } = {}
 				for _ = 1, Keys do
 					const Key, KLen = ReadVarInt(Bytecode, Offset)
 					Offset += KLen
@@ -1201,7 +1243,7 @@ end
 				const Y = buffer.readf32(Bytecode, Offset + 4)
 				const Z = buffer.readf32(Bytecode, Offset + 8)
 				if VECTOR_HAS_W then
-					Constants[j] = vector.create(X, Y, Z, buffer.readf64(Bytecode, Offset + 12))
+					Constants[j] = vector.create(X, Y, Z, buffer.readf32(Bytecode, Offset + 12))
 				else
 					Constants[j] = vector.create(X, Y, Z)
 				end
@@ -1209,7 +1251,7 @@ end
 			elseif KType == 8 then -- LBC_CONSTANT_TABLE_WITH_CONSTANTS
 				const Keys, Length = ReadVarInt(Bytecode, Offset)
 				Offset += Length
-				const Table = {} :: { [any]: any }
+				const Table: { [any]: any } = {}
 				for _ = 1, Keys do
 					const Key, KLen = ReadVarInt(Bytecode, Offset)
 					Offset += KLen
@@ -1251,17 +1293,20 @@ end
 				const _ClassName = Constants[ClassNameIndex + 1] :: string
 				const ClassMembers: { [string]: any } = {}
 
-				Constants[j] = setmetatable(ClassMembers, table.freeze({
-					__call = @native function(self: { [string]: any }, Init: { [string]: any }): { [string]: any }
-						const Object = table.clone(ClassMembers)
+				Constants[j] = setmetatable(
+					ClassMembers,
+					table.freeze({
+						__call = @native function(self: { [string]: any }, Init: { [string]: any }): { [string]: any }
+							const Object = table.clone(ClassMembers)
 
-						for index, value in Init do
-							Object[index] = value
-						end
+							for index, value in Init do
+								Object[index] = value
+							end
 
-						return Object
-					end,
-				}))
+							return Object
+						end,
+					})
+				)
 			elseif KType == 11 then -- LBC_CONSTANT_VECTORD
 				const X = buffer.readf64(Bytecode, Offset)
 				const Y = buffer.readf64(Bytecode, Offset + 8)
@@ -1368,7 +1413,7 @@ end
 			end
 			Offset = ProtoStartOffset + ProtoSize
 		end
-		
+
 		ProtoTable[i] = table.freeze({
 			FunId = FunId,
 			Code = Code,
@@ -1382,7 +1427,7 @@ end
 			LineDefined = LineDefined,
 			DebugName = DebugName,
 			LineInfo = LineInfo,
-			ChunkName = ChunkName or DebugName
+			ChunkName = ChunkName or DebugName,
 		})
 	end
 
@@ -1391,7 +1436,7 @@ end
 
 	const MainProto = ProtoTable[MainProtoIndex + 1]
 
-	return @native function(...: any): ...any
+	return @native @checked function(...: any): ...any
 		const Nups = MainProto.Nups
 		const Upvals = table.create(Nups) :: { Upvalue }
 		for i = 1, Nups do
