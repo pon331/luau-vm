@@ -677,9 +677,9 @@ const function LuauExecute(
 						const A = bit32.extract(Instruction, 8, 8) + 1
 						const B = bit32.extract(Instruction, 16, 8) + 1
 						const C = bit32.extract(Instruction, 24, 8)
-						local Result = Stack[B]
+						local Result = Stack[C + 1]
 						for i = C, B, -1 do
-							Result = Stack[i + 1] .. Result
+							Result = Stack[i] .. Result
 						end
 						Stack[A] = Result
 					elseif Opcode == 50 then -- NOT
